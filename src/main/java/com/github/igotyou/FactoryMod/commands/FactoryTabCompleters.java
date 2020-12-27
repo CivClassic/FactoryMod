@@ -17,12 +17,12 @@ public class FactoryTabCompleters {
 		recipeTrie.insert(name.toLowerCase());
 	}
 	
-	public static List<String> completeFactory(String prefix) {
-		return factoryTrie.match(prefix);
+	public static List<String> completeFactory(String[] args) {
+		return factoryTrie.match(args);
 	}
 	
-	public static List<String> completeRecipe(String prefix) {
-		return recipeTrie.match(prefix);
+	public static List<String> completeRecipe(String[] args) {
+		return recipeTrie.match(args);
 	}
 
 }
