@@ -5,6 +5,7 @@ import com.github.igotyou.FactoryMod.events.FactoryActivateEvent;
 import com.github.igotyou.FactoryMod.events.RecipeExecuteEvent;
 import com.github.igotyou.FactoryMod.interactionManager.IInteractionManager;
 import com.github.igotyou.FactoryMod.powerManager.FurnacePowerManager;
+import com.github.igotyou.FactoryMod.utility.IIOFInventoryProvider;
 import com.github.igotyou.FactoryMod.powerManager.IPowerManager;
 import com.github.igotyou.FactoryMod.recipes.IRecipe;
 import com.github.igotyou.FactoryMod.recipes.InputRecipe;
@@ -15,6 +16,8 @@ import com.github.igotyou.FactoryMod.recipes.Upgraderecipe;
 import com.github.igotyou.FactoryMod.repairManager.IRepairManager;
 import com.github.igotyou.FactoryMod.repairManager.PercentageHealthRepairManager;
 import com.github.igotyou.FactoryMod.structures.FurnCraftChestStructure;
+import com.github.igotyou.FactoryMod.utility.DirectionMask;
+import com.github.igotyou.FactoryMod.utility.IOSelector;
 import com.github.igotyou.FactoryMod.utility.LoggingUtils;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -22,16 +25,20 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+
+import com.github.igotyou.FactoryMod.utility.MultiInventoryWrapper;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
 import org.bukkit.block.Chest;
 import org.bukkit.block.Furnace;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.FurnaceInventory;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
+import org.jetbrains.annotations.Nullable;
 import vg.civcraft.mc.citadel.ReinforcementLogic;
 import vg.civcraft.mc.citadel.model.Reinforcement;
 import vg.civcraft.mc.civmodcore.inventory.items.ItemUtils;
@@ -44,7 +51,7 @@ import vg.civcraft.mc.namelayer.permission.PermissionType;
  * which is used as inventory holder
  *
  */
-public class FurnCraftChestFactory extends Factory {
+public class FurnCraftChestFactory extends Factory implements IIOFInventoryProvider {
 	protected int currentProductionTimer = 0;
 	protected List<IRecipe> recipes;
 	protected IRecipe currentRecipe;
@@ -53,6 +60,9 @@ public class FurnCraftChestFactory extends Factory {
 	private UUID activator;
 	private double citadelBreakReduction;
 	private boolean autoSelect;
+	private @Nullable IOSelector furnaceIoSelector;
+	private @Nullable IOSelector tableIoSelector;
+	private UiMenuMode uiMenuMode;
 
 	private static HashSet<FurnCraftChestFactory> pylonFactories;
 
@@ -60,12 +70,16 @@ public class FurnCraftChestFactory extends Factory {
 			FurnCraftChestStructure mbs, int updateTime, String name, List<IRecipe> recipes,
 			double citadelBreakReduction) {
 		super(im, rm, ipm, mbs, updateTime, name);
+		if (ipm instanceof FurnacePowerManager) {
+			((FurnacePowerManager) ipm).setIofProvider(this);
+		}
 		this.active = false;
 		this.runCount = new HashMap<>();
 		this.recipeLevel = new HashMap<>();
 		this.recipes = new ArrayList<>();
 		this.citadelBreakReduction = citadelBreakReduction;
 		this.autoSelect = false;
+		this.uiMenuMode = UiMenuMode.SIMPLE;
 		for (IRecipe rec : recipes) {
 			addRecipe(rec);
 		}
@@ -90,6 +104,138 @@ public class FurnCraftChestFactory extends Factory {
 		}
 		Chest chestBlock = (Chest) (getChest().getState());
 		return chestBlock.getInventory();
+	}
+
+	public Inventory getInputInventory() {
+		FurnCraftChestStructure fccs = (FurnCraftChestStructure) getMultiBlockStructure();
+		ArrayList<Inventory> invs = new ArrayList<>(12);
+		Block fblock = getFurnace();
+		BlockFace facing = getFacing();
+		for (BlockFace relativeFace : getFurnaceIOSelector().getInputs(facing)) {
+			Block relBlock = fblock.getRelative(relativeFace);
+			if (relBlock.getType() == Material.CHEST || relBlock.getType() == Material.TRAPPED_CHEST) {
+				invs.add(((Chest) relBlock.getState()).getInventory());
+			}
+		}
+		Block tblock = fccs.getCraftingTable();
+		for (BlockFace relativeFace : getTableIOSelector().getInputs(facing)) {
+			Block relBlock = tblock.getRelative(relativeFace);
+			if (relBlock.getType() == Material.CHEST || relBlock.getType() == Material.TRAPPED_CHEST) {
+				invs.add(((Chest) relBlock.getState()).getInventory());
+			}
+		}
+		return new MultiInventoryWrapper(invs);
+	}
+
+	public Inventory getOutputInventory() {
+		FurnCraftChestStructure fccs = (FurnCraftChestStructure) getMultiBlockStructure();
+		ArrayList<Inventory> invs = new ArrayList<>(12);
+		Block fblock = getFurnace();
+		BlockFace facing = getFacing();
+		for (BlockFace relativeFace : getFurnaceIOSelector().getOutputs(facing)) {
+			Block relBlock = fblock.getRelative(relativeFace);
+			if (relBlock.getType() == Material.CHEST || relBlock.getType() == Material.TRAPPED_CHEST) {
+				invs.add(((Chest) relBlock.getState()).getInventory());
+			}
+		}
+		Block tblock = fccs.getCraftingTable();
+		for (BlockFace relativeFace : getTableIOSelector().getOutputs(facing)) {
+			Block relBlock = tblock.getRelative(relativeFace);
+			if (relBlock.getType() == Material.CHEST || relBlock.getType() == Material.TRAPPED_CHEST) {
+				invs.add(((Chest) relBlock.getState()).getInventory());
+			}
+		}
+		return new MultiInventoryWrapper(invs);
+	}
+
+	public Inventory getFuelInventory() {
+		if (!getFurnaceIOSelector().hasFuel() && !getTableIOSelector().hasFuel()) {
+			return getFurnaceInventory();
+		}
+		FurnCraftChestStructure fccs = (FurnCraftChestStructure) getMultiBlockStructure();
+		ArrayList<Inventory> invs = new ArrayList<>(13);
+		invs.add(getFurnaceInventory());
+		Block fblock = getFurnace();
+		BlockFace facing = getFacing();
+		for (BlockFace relativeFace : getFurnaceIOSelector().getFuel(facing)) {
+			Block relBlock = fblock.getRelative(relativeFace);
+			if (relBlock.getType() == Material.CHEST || relBlock.getType() == Material.TRAPPED_CHEST) {
+				invs.add(((Chest) relBlock.getState()).getInventory());
+			}
+		}
+		Block tblock = fccs.getCraftingTable();
+		for (BlockFace relativeFace : getTableIOSelector().getFuel(facing)) {
+			Block relBlock = tblock.getRelative(relativeFace);
+			if (relBlock.getType() == Material.CHEST || relBlock.getType() == Material.TRAPPED_CHEST) {
+				invs.add(((Chest) relBlock.getState()).getInventory());
+			}
+		}
+		return new MultiInventoryWrapper(invs);
+	}
+
+	@Override
+	public int getInputCount() {
+		return furnaceIoSelector.getInputCount() + tableIoSelector.getInputCount();
+	}
+
+	@Override
+	public int getOutputCount() {
+		return furnaceIoSelector.getOutputCount() + tableIoSelector.getOutputCount();
+	}
+
+	@Override
+	public int getFuelCount() {
+		return furnaceIoSelector.getFuelCount() + tableIoSelector.getFuelCount();
+	}
+
+	public void setFurnaceIOSelector(IOSelector ioSelector) {
+		this.furnaceIoSelector = ioSelector;
+	}
+
+	public IOSelector getFurnaceIOSelector() {
+		if (furnaceIoSelector == null) {
+			furnaceIoSelector = new IOSelector();
+		}
+		return furnaceIoSelector;
+	}
+
+	public void setTableIOSelector(IOSelector ioSelector) {
+		this.tableIoSelector = ioSelector;
+	}
+
+	public IOSelector getTableIOSelector() {
+		if (tableIoSelector == null) {
+			tableIoSelector = new IOSelector();
+			BlockFace front = getFacing();
+			BlockFace chestDir = getFurnace().getFace(getCraftingTable());
+			if (chestDir != null && front != null) {
+				DirectionMask.Direction defaultDir = DirectionMask.Direction.getDirection(front, chestDir);
+				tableIoSelector.setState(defaultDir, IOSelector.IOState.BOTH);
+			}
+		}
+		return tableIoSelector;
+	}
+
+	public void setUiMenuMode(UiMenuMode uiMenuMode) {
+		this.uiMenuMode = uiMenuMode;
+	}
+
+	public UiMenuMode getUiMenuMode() {
+		return uiMenuMode;
+	}
+
+	/**
+	 * @return the direction the furnace (and thus this factory) is facing.
+	 */
+	public @Nullable BlockFace getFacing() {
+		Block fblock = getFurnace();
+		if (fblock.getType() != Material.FURNACE) {
+			return null;
+		}
+		Furnace fstate = (Furnace) fblock.getState();
+		org.bukkit.block.data.type.Furnace fdata = (org.bukkit.block.data.type.Furnace) fstate.getBlockData();
+		BlockFace facing = fdata.getFacing();
+		return facing;
 	}
 
 	/**
@@ -259,6 +405,13 @@ public class FurnCraftChestFactory extends Factory {
 	}
 
 	/**
+	 * @return The crafting table of this factory
+	 */
+	public Block getCraftingTable() {
+		return ((FurnCraftChestStructure) mbs).getCraftingTable();
+	}
+
+	/**
 	 * @return The chest of this factory
 	 */
 	public Block getChest() {
@@ -362,11 +515,11 @@ public class FurnCraftChestFactory extends Factory {
 						// this if else might look a bit weird, but because
 						// upgrading changes the current recipe and a lot of
 						// other stuff, this is needed
-						currentRecipe.applyEffect(getInventory(), this);
+						currentRecipe.applyEffect(getInputInventory(), getOutputInventory(), this);
 						deactivate();
 						return;
 					} else {
-						if (currentRecipe.applyEffect(getInventory(), this)) {
+						if (currentRecipe.applyEffect(getInputInventory(), getOutputInventory(), this)) {
 							runCount.put(currentRecipe, runCount.get(currentRecipe) + 1);
 						} else {
 							sendActivatorMessage(ChatColor.RED + currentRecipe.getName() + " in " + name + " deactivated because it ran out of storage space");
@@ -506,12 +659,12 @@ public class FurnCraftChestFactory extends Factory {
 	 *         selected recipe at least once
 	 */
 	public boolean hasInputMaterials() {
-		return currentRecipe.enoughMaterialAvailable(getInventory());
+		return currentRecipe.enoughMaterialAvailable(getInputInventory());
 	}
 
 	public IRecipe getAutoSelectRecipe() {
 		for (IRecipe rec : recipes) {
-			if (rec.enoughMaterialAvailable(getInventory())) {
+			if (rec.enoughMaterialAvailable(getInputInventory())) {
 				return rec;
 			}
 		}
@@ -554,5 +707,18 @@ public class FurnCraftChestFactory extends Factory {
 
 	public double getCitadelBreakReduction() {
 		return citadelBreakReduction;
+	}
+
+	public enum UiMenuMode {
+		SIMPLE(Material.PAPER, "Show simple menu"),
+		IOCONFIG(Material.HOPPER, "Show IO config menu");
+
+		public final Material uiMaterial;
+		public final String uiDescription;
+
+		private UiMenuMode(Material uiMaterial, String uiDescription) {
+			this.uiMaterial = uiMaterial;
+			this.uiDescription = uiDescription;
+		}
 	}
 }
