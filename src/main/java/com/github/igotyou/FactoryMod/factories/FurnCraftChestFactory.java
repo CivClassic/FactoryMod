@@ -138,26 +138,11 @@ public class FurnCraftChestFactory extends Factory {
 			rm.breakIt();
 			return;
 		}
-
 		//If Autoselect is on
 		if (autoSelect) {
-			//If the factory is in disrepair and we got autoSelect on, we want to repair it
-			if (rm.inDisrepair() && !(currentRecipe instanceof RepairRecipe)) {
-				IRecipe autoRepair = getRepairRecipe();
-				//Just incase any factory for some reason cannot be repaired.
-				if (autoRepair == null) {
-					if (p != null) {
-						p.sendMessage(ChatColor.RED + "The factory doesn't have a repair recipe.");
-					}
-					return;
-				} else {
-					if (p != null) {
-						p.sendMessage(ChatColor.GOLD + "Automatically selected recipe " + autoRepair.getName());
-					}
-					setRecipe(autoRepair);
-				}
-			}
-			if (!hasInputMaterials() || (!rm.inDisrepair() && (currentRecipe instanceof  RepairRecipe))) {
+			//Check if we either don't have enough materials to run current recipe,
+			// or current recipe is repair recipe and factory isn't broken
+			if ((!hasInputMaterials() && !rm.inDisrepair()) || ((currentRecipe instanceof  RepairRecipe && !rm.inDisrepair()))) {
 				//Let autoselect find something to run that isn't the repair recipe
 				IRecipe autoSelected = getAutoSelectRecipe();
 				if (autoSelected == null) {
@@ -170,6 +155,28 @@ public class FurnCraftChestFactory extends Factory {
 						p.sendMessage(ChatColor.GOLD + "Automatically selected recipe " + autoSelected.getName());
 					}
 					setRecipe(autoSelected);
+				}
+			}
+			//If the factory is in disrepair and we got autoSelect on, we want to repair it
+			if (rm.inDisrepair()) {
+				IRecipe autoRepair = getRepairRecipe();
+				//Just incase any factory for some reason cannot be repaired.
+				if (autoRepair == null) {
+					if (p != null) {
+						p.sendMessage(ChatColor.RED + "This factory doesn't have a repair recipe.");
+					}
+					return;
+				} else {
+					if (p != null) {
+						p.sendMessage(ChatColor.GOLD + "Automatically selected recipe " + autoRepair.getName());
+					}
+					setRecipe(autoRepair);
+					//Check we have the necessary materials available for repairing the factory
+					if (!hasInputMaterials()) {
+						p.sendMessage(ChatColor.RED + "This factory is in disrepair and " +
+								"there's not enough materials available to automatically repair it");
+						return;
+					}
 				}
 			}
 		} else {
